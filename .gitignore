@@ -34,7 +34,7 @@ build/
 *.swp
 
 # Uploads and local files
-uploads/
+# uploads/   # uncomment to ignore uploads in the future
 
 # Cache
 .cache/

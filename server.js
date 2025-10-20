@@ -2712,7 +2712,8 @@ app.get('/attendance/merged', async (req, res) => {
     const userIds = Array.from(new Set(attendanceRows.map(r => r.user_id)));
 
     // Attempt to call external service's batch endpoint: POST { ids: [...] } -> [{ id, name }] expected
-    const fetch = require('node-fetch');
+  // Use global fetch if available (Node 18+), otherwise lazy-load node-fetch (ESM) via dynamic import
+  const fetch = global.fetch || ((...args) => import('node-fetch').then(({ default: f }) => f(...args)));
     let nameMap = {};
     try {
       const batchUrl = userServiceUrl.replace(/\/+$/, '') + '/users/batch-names';
