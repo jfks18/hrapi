@@ -1,0 +1,82 @@
+[
+  {
+    "user_id": "user1",
+    "time_in": "2025-08-12T08:00:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Present",
+    "late_minutes": 0,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user2",
+    "time_in": "2025-08-12T08:15:00+08:00",
+    "time_out": "2025-08-12T17:05:00+08:00",
+    "status": "Late",
+    "late_minutes": 15,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user3",
+    "time_in": "2025-08-12T08:00:00+08:00",
+    "time_out": "2025-08-12T16:55:00+08:00",
+    "status": "Present",
+    "late_minutes": 0,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user4",
+    "time_in": "2025-08-12T08:30:00+08:00",
+    "time_out": "2025-08-12T17:10:00+08:00",
+    "status": "Late",
+    "late_minutes": 30,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user5",
+    "time_in": "2025-08-12T08:05:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Present",
+    "late_minutes": 5,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user6",
+    "time_in": "2025-08-12T08:00:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Present",
+    "late_minutes": 0,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user7",
+    "time_in": "2025-08-12T08:20:00+08:00",
+    "time_out": "2025-08-12T17:15:00+08:00",
+    "status": "Late",
+    "late_minutes": 20,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user8",
+    "time_in": "2025-08-12T08:00:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Present",
+    "late_minutes": 0,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user9",
+    "time_in": "2025-08-12T08:10:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Late",
+    "late_minutes": 10,
+    "date": "2025-08-12"
+  },
+  {
+    "user_id": "user10",
+    "time_in": "2025-08-12T08:00:00+08:00",
+    "time_out": "2025-08-12T17:00:00+08:00",
+    "status": "Present",
+    "late_minutes": 0,
+    "date": "2025-08-12"
+  }
+]
