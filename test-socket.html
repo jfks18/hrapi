@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Socket.IO Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .status { font-size: 18px; font-weight: bold; margin: 10px 0; }
+        .online { color: green; }
+        .offline { color: red; }
+        .connecting { color: orange; }
+        .log { background: #f0f0f0; padding: 10px; margin: 10px 0; max-height: 300px; overflow-y: auto; }
+        button { padding: 10px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Socket.IO Connection Test</h1>
+    
+    <div id="status" class="status offline">Status: Offline</div>
+    
+    <div>
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+        <button onclick="sendMessage()">Send Test Message</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+    
+    <div id="log" class="log"></div>
+
+    <!-- Socket.IO Client -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket = null;
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        
+        function log(message) {
+            const time = new Date().toLocaleTimeString();
+            logEl.innerHTML += `<div>[${time}] ${message}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(status, className) {
+            statusEl.textContent = `Status: ${status}`;
+            statusEl.className = `status ${className}`;
+        }
+        
+        function connect() {
+            if (socket && socket.connected) {
+                log('Already connected');
+                return;
+            }
+            
+            log('Attempting to connect to Socket.IO server...');
+            updateStatus('Connecting...', 'connecting');
+            
+            // Try different connection configurations
+            socket = io('http://localhost:5000', {
+                transports: ['websocket', 'polling'],
+                timeout: 5000,
+                forceNew: true
+            });
+            
+            socket.on('connect', () => {
+                log('✅ Connected to Socket.IO server');
+                updateStatus('Online', 'online');
+                log(`Socket ID: ${socket.id}`);
+            });
+            
+            socket.on('disconnect', (reason) => {
+                log(`❌ Disconnected: ${reason}`);
+                updateStatus('Offline', 'offline');
+            });
+            
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message}`);
+                updateStatus('Offline', 'offline');
+            });
+            
+            socket.on('error', (error) => {
+                log(`❌ Socket error: ${error}`);
+            });
+            
+            // Test chat events
+            socket.on('message', (data) => {
+                log(`📨 Received message: ${JSON.stringify(data)}`);
+            });
+            
+            socket.on('user joined', (data) => {
+                log(`👤 User joined: ${JSON.stringify(data)}`);
+            });
+            
+            socket.on('user left', (data) => {
+                log(`👤 User left: ${JSON.stringify(data)}`);
+            });
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                log('Disconnected from Socket.IO server');
+                updateStatus('Offline', 'offline');
+            }
+        }
+        
+        function sendMessage() {
+            if (socket && socket.connected) {
+                const testMessage = {
+                    room: 'test-room',
+                    message: 'Hello from test client!',
+                    sender_name: 'Test User'
+                };
+                socket.emit('send message', testMessage);
+                log(`📤 Sent test message: ${JSON.stringify(testMessage)}`);
+            } else {
+                log('❌ Not connected - cannot send message');
+            }
+        }
+        
+        function clearLog() {
+            logEl.innerHTML = '';
+        }
+        
+        // Auto-connect on page load
+        log('Page loaded. Click Connect to test Socket.IO connection.');
+        
+        // Auto-connect for convenience
+        setTimeout(() => {
+            connect();
+        }, 1000);
+    </script>
+</body>
+</html>

@@ -14,6 +14,9 @@ Copy `.env.example` to `.env` and set values:
 - `JWT_SECRET`: long random string
 - `DB_*`: MySQL connection
 - `USER_SERVICE_URL` (optional): if using external user lookup
+- `ALLOWED_ORIGINS`: comma-separated list (e.g., `capacitor://localhost,ionic://localhost`)
+- `CORS_ALLOW_ALL`: set to `true` to allow any origin (dev only)
+- `ALLOWED_ORIGIN_REGEX`: optional regex to match origins (e.g., `.*\\.ngrok-free\\.app$`)
 
 ## Install & Run
 ```bash
@@ -72,6 +75,22 @@ server {
   }
 }
 ```
+
+## Mobile access checklist
+- Base URL:
+  - Android emulator -> use `http://10.0.2.2:5000`
+  - iOS simulator -> use your host machine IP (e.g., `http://192.168.1.10:5000`)
+  - Physical devices -> same LAN IP and port as server
+- HTTP vs HTTPS:
+  - Android 9+ blocks cleartext HTTP by default; either use HTTPS (ngrok/SSL) or allow cleartext in network security config.
+  - iOS ATS requires HTTPS or add an exception for your domain.
+- CORS:
+  - For WebView apps (Capacitor/Ionic), set `ALLOWED_ORIGINS` to include `capacitor://localhost` or `ionic://localhost`.
+  - For native mobile fetch, Origin header is typically absent (server already allows no-origin requests).
+- Firewalls/ports:
+  - Ensure port 5000 is reachable or proxy via Nginx 80/443.
+- Auth:
+  - Send `Authorization: Bearer <token>` header for protected routes.
 
 ## File uploads
 - Files are stored under `uploads/certificates/`

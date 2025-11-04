@@ -20,7 +20,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const http = require('http');
-const nodemailer = require('nodemailer');
 
 
 const app = express();
@@ -35,386 +34,35 @@ dotenv.config();
 const allowedOrigins = [
   process.env.NGROK_URL,
   process.env.FRONTEND_URL || 'http://localhost:3000',
-  'https://active-upward-sunbeam.ngrok-free.app', "https://hrmc.onrender.com", "http://localhost:8081"
+  'https://active-upward-sunbeam.ngrok-free.app', "https://hrmc.onrender.com", "http://localhost:8081 "
 ].filter(Boolean);
 console.log('CORS allowed origins:', allowedOrigins.length ? allowedOrigins : 'any');
-
 app.use(cors({
   origin: function(origin, callback) {
-    // allow requests with no origin (like mobile apps or curl)
+    // allow requests with no origin (like mobile apps, curl)
     if (!origin) return callback(null, true);
+    // some WebViews send literal 'null' as Origin — allow it
+    if (origin === 'null') return callback(null, true);
+    // explicit allowlist
     if (allowedOrigins.length === 0) return callback(null, true);
     if (allowedOrigins.indexOf(origin) !== -1) return callback(null, true);
+    // also allow localhost/emulator with optional ports
+    const emulatorHostRegex = /^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|10\.0\.3\.2)(:\\d+)?$/;
+    if (emulatorHostRegex.test(origin)) return callback(null, true);
     return callback(new Error('CORS policy: This origin is not allowed'));
   },
   credentials: true,
   allowedHeaders: [
-        'Origin',
-        'X-Requested-With',
-        'Content-Type',
-        'Accept',
-        'Authorization',
-        'ngrok-skip-browser-warning'
-    ],
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE']
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'ngrok-skip-browser-warning'
+  ],
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+  optionsSuccessStatus: 204
 }));
-  // JWT authentication middleware for protected routes
-  // function authenticateToken(req, res, next) {
-  //   const authHeader = req.headers['authorization'];
-  //   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-  //     return res.status(401).json({ error: 'Unauthorized: No token provided' });
-  //   }
-  //   const token = authHeader.split(' ')[1];
-  //   try {
-  //     req.user = jwt.verify(token, process.env.JWT_SECRET);
-  //     next();
-  //   } catch (err) {
-  //     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-  //   }
-  // }
-
-app.use(express.json());
-app.use(cookieParser());
-app.use(morgan('dev'));
-app.use(helmet());
-// Debug middleware: capture and log responses with 400 or 404 for easier debugging
-app.use((req, res, next) => {
-  // hold original methods
-  const originalJson = res.json.bind(res);
-  const originalSend = res.send.bind(res);
-  const originalStatus = res.status.bind(res);
-
-  // store the body that will be sent
-  let responseBody;
-  res.json = (body) => {
-    responseBody = body;
-    return originalJson(body);
-  };
-  res.send = (body) => {
-    responseBody = body;
-    return originalSend(body);
-  };
-
-  // intercept status to know final status code
-  res.status = (code) => {
-    res.__statusCode = code;
-    return originalStatus(code);
-  };
-
-  // after response finished, check code and log if 400 or 404
-  res.on('finish', () => {
-    const statusCode = res.__statusCode || res.statusCode;
-    if (statusCode === 400 || statusCode === 404) {
-      try {
-        console.warn(`HTTP ${statusCode} -> ${req.method} ${req.originalUrl}`);
-        console.warn('  params:', req.params);
-        console.warn('  query :', req.query);
-        console.warn('  body  :', req.body);
-        console.warn('  response body:', responseBody);
-      } catch (e) {
-        console.warn('Error logging 400/404 details:', e);
-      }
-    }
-  });
-
-  next();
-});
-// JWT authentication middleware helper
-// Use this middleware selectively by passing `authenticateToken` to routes that require auth.
-function authenticateToken(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  // Log the header for debugging (avoid printing full token in production)
-  if (!authHeader) {
-    console.warn('authenticateToken: missing Authorization header');
-    return res.status(401).json({ error: 'Unauthorized: No token provided' });
-  }
-  if (!authHeader.startsWith('Bearer ')) {
-    console.warn('authenticateToken: Authorization header does not start with "Bearer " -', authHeader.slice(0, 30));
-    return res.status(401).json({ error: 'Unauthorized: Malformed Authorization header' });
-  }
-  const token = authHeader.split(' ')[1];
-
-  // If JWT_SECRET is not set (development), decode token without verification and allow
-  if (!process.env.JWT_SECRET) {
-    console.warn('Warning: JWT_SECRET not set — authenticateToken will decode token without verification (development only)');
-    try {
-      req.user = jwt.decode(token);
-    } catch (e) {
-      req.user = null;
-    }
-    return next();
-  }
-
-  try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch (err) {
-    console.warn('authenticateToken: jwt.verify failed:', err && err.message);
-    return res.status(401).json({ error: 'Unauthorized: Invalid token', details: err && err.message });
-  }
-}
-// MySQL connection setup
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-});
-
-db.connect((err) => {
-  if (err) {
-    console.error('MySQL connection error:', err);
-  } else {
-    console.log('Connected to MySQL database');
-  }
-});
-
-// Email configuration
-const createEmailTransporter = () => {
-  if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('Email configuration incomplete. Email sending will be disabled.');
-    return null;
-  }
-
-  return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
-    port: process.env.EMAIL_PORT || 587,
-    secure: process.env.EMAIL_SECURE === 'true', // true for 465, false for other ports
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-};
-
-const emailTransporter = createEmailTransporter();
-
-// Email sending helper function
-const sendWelcomeEmail = async (email, name, password) => {
-  if (!emailTransporter) {
-    console.warn('Email transporter not configured. Skipping welcome email.');
-    return { success: false, error: 'Email not configured' };
-  }
-
-  const mailOptions = {
-    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-    to: email,
-    subject: 'Welcome to HRMC - Your Account Credentials',
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Welcome to HRMC System</h2>
-        <p>Hello <strong>${name}</strong>,</p>
-        <p>Your account has been successfully created in the HRMC system. Here are your login credentials:</p>
-        
-        <div style="background-color: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0;">
-          <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Password:</strong> ${password}</p>
-        </div>
-        
-        <p style="color: #666;">
-          <strong>Important:</strong> Please keep this information secure and consider changing your password after your first login.
-        </p>
-        
-        <p>If you have any questions, please contact the HR department.</p>
-        
-        <p>Best regards,<br>HRMC Administration Team</p>
-      </div>
-    `
-  };
-
-  try {
-    const info = await emailTransporter.sendMail(mailOptions);
-    console.log('Welcome email sent:', info.messageId);
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('Failed to send welcome email:', error);
-    return { success: false, error: error.message };
-  }
-};
-
-/**
- * API Health Check
- * GET /
- * Returns: API status message
- */
-app.get('/', (req, res) => {
-  res.json({ message: 'API is running!' });
-});
-
-// Serve Socket.IO test page
-app.get('/test-socket', (req, res) => {
-  res.sendFile(__dirname + '/test-socket.html');
-});
-
-app.get('/leave_cred', (req, res) => {
-  const sql = 'SELECT `id`, `type`, `credits` FROM `leave_cred` WHERE 1';
-  db.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    res.json(results);
-  });
-});
-
-/**
- * Get Leave Balance for User
- * GET /leave_balance/:user_id
- * Returns: Leave credits and used days for each leave type for the specified user
- */
-app.get('/leave_balance/:user_id', (req, res) => {
-  const user_id = req.params.user_id;
-  const year = req.query.year || new Date().getFullYear();
-  
-  // Get all leave credit types
-  const creditsQuery = 'SELECT `id`, `type`, `credits` FROM `leave_cred` WHERE 1';
-  
-  db.query(creditsQuery, (err, credits) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    
-    // Get used leave days for the specified user and year (only approved requests)
-    const usedQuery = `
-      SELECT 
-        type,
-        SUM(DATEDIFF(end_date, start_date) + 1) as used_days
-      FROM leave_request 
-      WHERE user_id = ? 
-        AND is_approve = 1 
-        AND YEAR(start_date) = ?
-      GROUP BY type
-    `;
-    
-    db.query(usedQuery, [user_id, year], (err, usedResults) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database query error', details: err });
-      }
-      
-      // Create a map of used days by leave type
-      const usedMap = {};
-      usedResults.forEach(row => {
-        usedMap[row.type] = parseInt(row.used_days) || 0;
-      });
-      
-      // Calculate remaining leave for each type
-      const leaveBalance = credits.map(credit => {
-        const usedDays = usedMap[credit.type] || 0;
-        const remainingDays = credit.credits - usedDays;
-        
-        return {
-          id: credit.id,
-          type: credit.type,
-          total_credits: credit.credits,
-          used_days: usedDays,
-          remaining_days: Math.max(0, remainingDays), // Ensure non-negative
-          year: parseInt(year)
-        };
-      });
-      
-      res.json({
-        user_id: parseInt(user_id),
-        year: parseInt(year),
-        leave_balance: leaveBalance
-      });
-    });
-  });
-});
-
-/**
- * Get Leave Summary for All Users
- * GET /leave_summary
- * Returns: Leave balance summary for all users
- */
-app.get('/leave_summary', (req, res) => {
-  const year = req.query.year || new Date().getFullYear();
-  
-  const summaryQuery = `
-    SELECT 
-      u.id as user_id,
-      u.name as user_name,
-      lc.type as leave_type,
-      lc.credits as total_credits,
-      COALESCE(SUM(DATEDIFF(lr.end_date, lr.start_date) + 1), 0) as used_days,
-      (lc.credits - COALESCE(SUM(DATEDIFF(lr.end_date, lr.start_date) + 1), 0)) as remaining_days
-    FROM users u
-    CROSS JOIN leave_cred lc
-    LEFT JOIN leave_request lr ON u.id = lr.user_id 
-      AND lr.type = lc.type 
-      AND lr.is_approve = 1 
-      AND YEAR(lr.start_date) = ?
-    GROUP BY u.id, u.name, lc.type, lc.credits
-    ORDER BY u.name, lc.type
-  `;
-  
-  db.query(summaryQuery, [year], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    
-    res.json({
-      year: parseInt(year),
-      summary: results
-    });
-  });
-});
-
-/**
- * Get All Users
- * GET /users
- * Returns: List of all users
- */
-app.get('/users', (req, res) => {
-  const sql = `
-    SELECT 
-      u.id,
-      u.name,
-      u.email,
-      u.code,
-      u.department_id,
-      COALESCE(r.name, 'No Role') AS roleName,
-      d.name AS department_name
-    FROM users u
-    LEFT JOIN roles r ON TRIM(CAST(u.role_id AS CHAR)) = TRIM(CAST(r.id AS CHAR))
-    LEFT JOIN department d ON TRIM(CAST(u.department_id AS CHAR)) = TRIM(CAST(d.id AS CHAR))
-  `;
-  db.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    // Ensure IDs are strings to avoid numeric coercion
-    const formatted = results.map(row => ({
-      ...row,
-      id: row.id != null ? String(row.id) : null,
-      department_id: row.department_id != null ? String(row.department_id) : null
-    }));
-    res.json(formatted);
-  });
-});
-//get roles
-app.get('/roles', (req, res) => {
-  db.query('SELECT id, name FROM roles', (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    res.json(results);
-  });
-});
-
-/**
- * Get All User Codes
- * GET /users/codes
- * Returns: List of all user codes
- */
-app.get('/users/codes', (req, res) => {
-  db.query('SELECT code FROM users', (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    // Return array of codes only
-    const codes = results.map(row => row.code);
-    res.json(codes);
-  });
-});
 
 /**
  * Check if User Code Exists
@@ -482,24 +130,7 @@ app.post('/users', async (req, res) => {
       const values = [id, name, email, hashedPassword, role_id, department_id, code, created_at];
       try {
         const [result] = await db.promise().query(sql, values);
-        
-        // Send welcome email with credentials
-        const emailResult = await sendWelcomeEmail(email, name, password);
-        
-        const response = { 
-          message: 'User created', 
-          userId: id,
-          email_sent: emailResult.success
-        };
-        
-        if (!emailResult.success) {
-          console.warn(`User ${id} created but email failed:`, emailResult.error);
-          response.email_error = emailResult.error;
-        } else {
-          console.log(`Welcome email sent to ${email} for user ${id}`);
-        }
-        
-        return res.status(201).json(response);
+        return res.status(201).json({ message: 'User created', userId: id });
       } catch (err) {
         // If duplicate entry, determine whether it's the id (primary) or other unique field (email/code)
         if (err && err.code === 'ER_DUP_ENTRY') {
@@ -540,7 +171,7 @@ app.post('/login', (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: 'Email and password are required' });
   }
-  db.query('SELECT * FROM users WHERE email = ?', [email], async (err, results) => {
+  db.query('SELECT id, name, email, password, role_id, department_id FROM users WHERE email = ?', [email], async (err, results) => {
     if (err) {
       return res.status(500).json({ error: 'Database error', details: err });
     }
@@ -548,311 +179,38 @@ app.post('/login', (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
     const user = results[0];
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-    // Generate access token (short lived)
-    const accessToken = jwt.sign({ id: user.id, email: user.email, role_id: user.role_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    // Create a refresh token (opaque string) and persist
-    const refreshToken = crypto.randomBytes(48).toString('hex');
-    const refreshExpiry = new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)); // 30 days
-
-    const persistRefresh = (cb) => {
-      if (db && typeof db.query === 'function') {
-        // Ensure table exists then insert
-        const createSql = `CREATE TABLE IF NOT EXISTS refresh_tokens (token VARCHAR(255) PRIMARY KEY, user_id VARCHAR(255), expires_at DATETIME)`;
-        db.query(createSql, (createErr) => {
-          if (createErr) return cb(createErr);
-          db.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES (?, ?, ?)', [refreshToken, user.id, refreshExpiry], cb);
-        });
-      } else {
-        global.__refreshTokens = global.__refreshTokens || new Map();
-        global.__refreshTokens.set(refreshToken, { user_id: user.id, expires_at: refreshExpiry });
-        cb && cb(null);
+    try {
+      const match = await bcrypt.compare(password, user.password);
+      if (!match) {
+        return res.status(401).json({ error: 'Invalid email or password' });
       }
-    };
 
-    persistRefresh((persistErr) => {
-      if (persistErr) console.warn('persist refresh token failed', persistErr);
-      // set refresh token cookie
-      res.cookie('refreshToken', refreshToken, {
+      const payload = { userId: String(user.id), role_id: user.role_id };
+      const accessToken = jwt.sign(payload, process.env.JWT_SECRET || 'dev_secret', { expiresIn: '15m' });
+      const refreshToken = jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'dev_refresh_secret', { expiresIn: '7d' });
+
+      const secure = process.env.NODE_ENV === 'production';
+      res.cookie('refresh_token', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        expires: refreshExpiry
+        secure,
+        sameSite: secure ? 'none' : 'lax',
+        path: '/auth/refresh',
+        maxAge: 7 * 24 * 60 * 60 * 1000
       });
-      return res.status(200).json({ message: 'Login successful', token: accessToken, user: { id: user.id, name: user.name, email: user.email, role_id: user.role_id, department_id: user.department_id } });
-    });
-  });
-});
 
-// Refresh endpoint: issues a new access token when refresh cookie is present
-app.post('/auth/refresh', (req, res) => {
-  const rtoken = req.cookies && req.cookies.refreshToken;
-  if (!rtoken) return res.status(401).json({ error: 'no_refresh' });
-  if (db && typeof db.query === 'function') {
-    db.query('SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?', [rtoken], (err, rows) => {
-      if (err) return res.status(500).json({ error: 'db' });
-      if (!rows || rows.length === 0) return res.status(401).json({ error: 'invalid_refresh' });
-      const rec = rows[0];
-      if (new Date(rec.expires_at) < new Date()) return res.status(401).json({ error: 'refresh_expired' });
-      const newAccess = jwt.sign({ id: rec.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-      return res.json({ accessToken: newAccess });
-    });
-  } else {
-    global.__refreshTokens = global.__refreshTokens || new Map();
-    const rec = global.__refreshTokens.get(rtoken);
-    if (!rec) return res.status(401).json({ error: 'invalid_refresh' });
-    if (new Date(rec.expires_at) < new Date()) return res.status(401).json({ error: 'refresh_expired' });
-    const newAccess = jwt.sign({ id: rec.user_id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    return res.json({ accessToken: newAccess });
-  }
-});
-
-/**
- * Get Role by ID
- * GET /roles/:id
- * Returns: Role object with id and name
- */
-app.get('/roles/:id', authenticateToken, (req, res) => {
-  const roleId = req.params.id;
-  db.query('SELECT id, name FROM roles WHERE id = ?', [roleId], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
+      return res.json({
+        token: accessToken,
+        user: {
+          id: String(user.id),
+          name: user.name,
+          email: user.email,
+          role_id: user.role_id,
+          department_id: user.department_id
+        }
+      });
+    } catch (e) {
+      return res.status(500).json({ error: 'Login processing error', details: e.message });
     }
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Role not found' });
-    }
-    res.json(results[0]);
-  });
-});
-
-// 404 handler
-/**
- * Create Leave Request
- * POST /leave_request
- * Body: { user_id, type, start_date, end_date, status, reason, is_approve }
- * Returns: Success message and inserted record id
- */
-app.post('/leave_request', (req, res) => {
-  const { user_id, type, start_date, end_date, reason} = req.body;
-  if (!user_id || !type || !start_date || !end_date || !reason) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  const sql = `INSERT INTO leave_request (user_id, type, start_date, end_date, reason) VALUES (?, ?, ?, ?, ?)`;
-  const values = [user_id, type, start_date, end_date, reason];
-  db.promise().query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database insert error', details: err });
-    }
-    res.status(201).json({ message: 'Leave request created', id: result.insertId });
-  });
-});
-
-/**
- * Get All Leave Requests
- * GET /leave_request
- * Returns: List of all leave requests
- */
-app.get('/leave_request', (req, res) => {
-   const sql = `
-    SELECT lr.*, u.name AS employee_name
-    FROM leave_request lr
-    LEFT JOIN users u ON lr.user_id = u.id
-  `;
-  db.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    res.json(results);
-  });
-});
-
-/**
- * Get Leave Requests by User ID
- * GET /leave_request/user/:user_id
- * Returns: Array of leave requests for the user
- */
-app.get('/leave_request/user/:user_id', (req, res) => {
-  const user_id = req.params.user_id;
-  db.query('SELECT * FROM leave_request WHERE user_id = ?', [user_id], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'No leave requests found for this user' });
-    }
-    res.json(results);
-  });
-});
-
-/**
- * Update Leave Request
- * PUT /leave_request/:id
- * Body: { user_id, type, start_date, end_date, status, reason, is_approve }
- * Returns: Success message
- */
-app.put('/leave_request/:id', (req, res) => {
-  const id = req.params.id;
-  const { user_id, type, start_date, end_date, status, reason, is_approve } = req.body;
-  const sql = `UPDATE leave_request SET user_id = ?, type = ?, start_date = ?, end_date = ?, status = ?, reason = ?, is_approve = ? WHERE id = ?`;
-  const values = [user_id, type, start_date, end_date, status, reason, is_approve, id];
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-    res.json({ message: 'Leave request updated' });
-  });
-});
-
-/**
- * Delete Leave Request
- * DELETE /leave_request/:id
- * Returns: Success message
- */
-app.delete('/leave_request/:id', (req, res) => {
-  const id = req.params.id;
-  db.query('DELETE FROM leave_request WHERE id = ?', [id], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database delete error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-    res.json({ message: 'Leave request deleted' });
-  });
-});
-
-/**
- * Approve/Disapprove Leave Request
- * PATCH /leave_request/:id/approve
- * Body: { is_approve }
- * Returns: Success message
- */
-app.patch('/leave_request/:id/approve', (req, res) => {
-  const id = req.params.id;
- 
-
-  const sql = `UPDATE leave_request SET is_approve = 1, status = 'approved' WHERE id = ?`;
-  const values = [id];
-
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-    res.json({ message: 'Leave request approved' });
-  });
-});
-
-app.patch('/leave_request/:id/disapprove', (req, res) => {
-  const id = req.params.id;
-
-
-  const sql = `UPDATE leave_request SET is_approve = 0, status = 'disapproved' WHERE id = ?`;
-  const values = [id];
-
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-
-    res.json({ message: 'Leave request disapproved' });
-  });
-});
-
-
-/**
- * Get Leave Request by ID
- * GET /leave_request/:id
- * Returns: Leave request details
- */
-app.get('/leave_request/:id', (req, res) => {
-  const id = req.params.id;
-  db.query('SELECT * FROM leave_request WHERE id = ?', [id], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-    res.json(results[0]);
-  });
-});
-
-/**
- * Cancel Leave Request
- * PATCH /leave_request/:id/cancel
- * Updates status to 'cancelled'
- * Returns: Success message
- */
-app.patch('/leave_request/:id/cancel', (req, res) => {
-  const id = req.params.id;
-  
-  const sql = `UPDATE leave_request SET status = 'cancelled' WHERE id = ?`;
-  
-  db.query(sql, [id], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Leave request not found' });
-    }
-    res.json({ message: 'Leave request cancelled successfully' });
-  });
-});
-
-/**
- * Create Attendance Record
- * POST /attendance
- * Body: { user_id, time_in, time_out, status, late_minutes, date }
- * Returns: Success message and inserted record id
- */
-app.post('/attendance', (req, res) => {
-  const { user_id, time_in, time_out, status, late_minutes, date } = req.body;
-  if (!user_id || !date) {
-    return res.status(400).json({ error: 'Missing required fields: user_id and date are required' });
-  }
-  const sql = `INSERT INTO attendance (user_id, time_in, time_out, status, late_minutes) VALUES (?, ?, ?, ?, ?)`;
-  const values = [user_id, time_in, time_out, status, late_minutes];
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database insert error', details: err });
-    }
-    res.status(201).json({ message: 'Attendance record created', id: result.insertId });
-  });
-});
-/**
- * Get All Attendance Records
- * GET /attendance
- * Returns: List of all attendance records
- */
-app.get('/attendance', (req, res) => {
-  // join users to include the user's display name
-  // Use TRIM(CAST(... AS CHAR)) to normalize IDs so varchar/whitespace mismatches don't hide the user name
-  const sql = `
-    SELECT a.id, a.user_id, TRIM(CAST(u.name AS CHAR)) AS user_name,
-      COALESCE(TRIM(CAST(u.name AS CHAR)), TRIM(CAST(a.user_id AS CHAR))) AS display_name,
-      a.time_in, a.time_out, a.status, a.late_minutes, a.date
-    FROM attendance a
-    LEFT JOIN users u ON TRIM(CAST(a.user_id AS CHAR)) = TRIM(CAST(u.id AS CHAR))
-    ORDER BY a.date DESC
-  `;
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error('GET /attendance query error:', err);
-      return res.status(500).json({ error: 'Database query error' });
-    }
-    res.json(results);
   });
 });
 
@@ -1010,7 +368,7 @@ app.post('/evaluation', async (req, res) => {
   const randomNum = Math.floor(10000 + Math.random() * 90000); // 5 digits
   const evaluation_id = `${year}${month}${randomNum}`;
   try {
-    const [result] = await db.promise().execute(
+    const [result] = await db.execute(
       'INSERT INTO evaluation (id, teacher_id, student_id, expires_at, password, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [evaluation_id, teacher_id, student_id, expires_at, password, status, created_by]
     );
@@ -1023,15 +381,7 @@ app.post('/evaluation', async (req, res) => {
 // Get all evaluations
 app.get('/evaluation', async (req, res) => {
   try {
-    
-   const [rows] = await db.promise().query(`
-      SELECT 
-        e.*, 
-        u.name AS teacher_name
-      FROM evaluation e
-      LEFT JOIN users u ON e.teacher_id = u.id
-      ORDER BY e.created_at DESC
-    `);
+    const [rows] = await db.promise().query('SELECT * FROM evaluation');
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1081,181 +431,10 @@ app.post('/evaluation_answers', async (req, res) => {
   }
 });
 
-
-// Check if student has already submitted for a specific evaluation
-app.get('/evaluation/check-student-evaluation/:student_id/:evaluation_id', async (req, res) => {
-  const { student_id, evaluation_id } = req.params;
-  
-  try {
-    // Check if student has already submitted answers for this specific evaluation
-    const [rows] = await db.promise().query(`
-      SELECT DISTINCT ea.evaluation_id, ea.student_id,
-             e.teacher_id, u.name as teacher_name, e.created_at as evaluation_created
-      FROM evaluation_answers ea
-      JOIN evaluation e ON ea.evaluation_id = e.id
-      LEFT JOIN users u ON e.teacher_id = u.id
-      WHERE ea.student_id = ? 
-      AND ea.evaluation_id = ?
-    `, [student_id, evaluation_id]);
-    
-    if (rows.length > 0) {
-      const evaluation = rows[0];
-      return res.json({
-        hasEvaluated: true,
-        message: 'Student has already completed this specific evaluation',
-        evaluation_id: evaluation.evaluation_id,
-        teacher_id: evaluation.teacher_id,
-        teacher_name: evaluation.teacher_name,
-        evaluation_created: evaluation.evaluation_created
-      });
-    } else {
-      return res.json({
-        hasEvaluated: false,
-        message: 'Student can proceed with this evaluation'
-      });
-    }
-  } catch (err) {
-    console.error('Error checking student-specific evaluation status:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/evaluation/validate-login', async (req, res) => {
-  const { student_id, evaluation_code } = req.body;
-  
-  if (!student_id || !evaluation_code) {
-    return res.status(400).json({ 
-      error: 'Missing required fields', 
-      message: 'Both student ID and evaluation code are required' 
-    });
-  }
-  
-  try {
-    // Step 1: Check if student exists in students database
-    const [studentRows] = await db.promise().query(
-      'SELECT id, name, year, course FROM students WHERE id = ?',
-      [student_id]
-    );
-    
-    if (studentRows.length === 0) {
-      return res.json({
-        valid: false,
-        studentExists: false,
-        evaluationExists: false,
-        hasEvaluated: false,
-        message: 'Student ID not found in database. Only registered students can access evaluations.',
-        error: 'student_not_found'
-      });
-    }
-    
-    const student = studentRows[0];
-    
-    // Step 2: Check if evaluation code exists and get evaluation details
-    const [evaluationRows] = await db.promise().query(`
-      SELECT e.id, e.teacher_id, e.password, e.expires_at, e.status,
-             u.name as teacher_name
-      FROM evaluation e
-      LEFT JOIN users u ON e.teacher_id = u.id
-      WHERE e.id = ? OR e.password = ?
-    `, [evaluation_code, evaluation_code]);
-    
-    if (evaluationRows.length === 0) {
-      return res.json({
-        valid: false,
-        studentExists: true,
-        evaluationExists: false,
-        hasEvaluated: false,
-        student: student,
-        message: 'Invalid evaluation code. Please check the code and try again.',
-        error: 'evaluation_not_found'
-      });
-    }
-    
-    const evaluation = evaluationRows[0];
-    
-    // Step 3: Check if evaluation has expired
-    const now = new Date();
-    const expiryDate = new Date(evaluation.expires_at);
-    
-    if (now > expiryDate) {
-      return res.json({
-        valid: false,
-        studentExists: true,
-        evaluationExists: true,
-        hasEvaluated: false,
-        student: student,
-        evaluation: {
-          id: evaluation.id,
-          teacher_name: evaluation.teacher_name,
-          expires_at: evaluation.expires_at
-        },
-        message: 'This evaluation has expired and is no longer available.',
-        error: 'evaluation_expired'
-      });
-    }
-    
-    // Step 4: Check if student has already submitted answers for this evaluation
-    const [answerRows] = await db.promise().query(`
-      SELECT DISTINCT ea.evaluation_id, ea.student_id,
-             COUNT(ea.id) as answer_count
-      FROM evaluation_answers ea
-      WHERE ea.student_id = ? AND ea.evaluation_id = ?
-      GROUP BY ea.evaluation_id, ea.student_id
-    `, [student_id, evaluation.id]);
-    
-    if (answerRows.length > 0) {
-      const completedEvaluation = answerRows[0];
-      return res.json({
-        valid: false,
-        studentExists: true,
-        evaluationExists: true,
-        hasEvaluated: true,
-        student: student,
-        evaluation: {
-          id: evaluation.id,
-          teacher_name: evaluation.teacher_name,
-          expires_at: evaluation.expires_at
-        },
-        completion_details: {
-          answer_count: completedEvaluation.answer_count
-        },
-        message: 'You have already completed this evaluation. Duplicate submissions are not allowed.',
-        error: 'already_completed'
-      });
-    }
-    
-    // Step 5: All validations passed - student can proceed
-    return res.json({
-      valid: true,
-      studentExists: true,
-      evaluationExists: true,
-      hasEvaluated: false,
-      student: student,
-      evaluation: {
-        id: evaluation.id,
-        teacher_id: evaluation.teacher_id,
-        teacher_name: evaluation.teacher_name,
-        expires_at: evaluation.expires_at,
-        status: evaluation.status
-      },
-      message: 'Validation successful. You can proceed with the evaluation.',
-      redirect_to: 'evaluation_form'
-    });
-    
-  } catch (err) {
-    console.error('Error in evaluation login validation:', err);
-    res.status(500).json({ 
-      error: 'Database error during validation', 
-      message: 'An error occurred while validating your credentials. Please try again.',
-      details: err.message 
-    });
-  }
-});
-
 // Get all answers for an evaluation
 app.get('/evaluation_answers/:evaluation_id', async (req, res) => {
   try {
-    const [rows] = await db.promise().query(
+    const [rows] = await db.execute(
       'SELECT * FROM evaluation_answers WHERE evaluation_id = ?',
       [req.params.evaluation_id]
     );
@@ -1276,45 +455,6 @@ app.post('/evaluation_question', async (req, res) => {
     );
     res.json({ id: result.insertId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Check if student has already evaluated today
-app.get('/evaluation/check-student-today/:student_id', async (req, res) => {
-  const { student_id } = req.params;
-  
-  try {
-    // Check if student has any evaluation answers for today
-    const [rows] = await db.promise().query(`
-      SELECT DISTINCT ea.evaluation_id, ea.student_id,
-             e.teacher_id, u.name as teacher_name, e.created_at as evaluation_created
-      FROM evaluation_answers ea
-      JOIN evaluation e ON ea.evaluation_id = e.id
-      LEFT JOIN users u ON e.teacher_id = u.id
-      WHERE ea.student_id = ? 
-      AND DATE(e.created_at) = CURDATE()
-    `, [student_id]);
-    
-    if (rows.length > 0) {
-      return res.json({
-        hasEvaluated: true,
-        message: 'Student has already completed an evaluation today',
-        evaluations: rows.map(row => ({
-          evaluation_id: row.evaluation_id,
-          teacher_id: row.teacher_id,
-          teacher_name: row.teacher_name,
-          evaluation_created: row.evaluation_created
-        }))
-      });
-    } else {
-      return res.json({
-        hasEvaluated: false,
-        message: 'Student can proceed with evaluation'
-      });
-    }
-  } catch (err) {
-    console.error('Error checking student evaluation status:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1398,230 +538,36 @@ app.get('/admin/professors/evaluations', async (req, res) => {
 });
   
 
-// Bulk insert 10 evaluation questions for professors
+// Bulk insert evaluation questions
 app.post('/evaluation_questions/bulk', async (req, res) => {
-  // 10 sample questions
   const questions = [
     'Comes to class with well-prepared lessons.',
-'Presents lessons clearly and understandably.',
-'Demonstrates mastery of the subject matter.',
-'Uses appropriate teaching strategies and instructional materials.',
-'Encourages critical thinking and active participation.',
-'Assesses student performance fairly and regularly.',
-'Utilizes multiple assessment strategies and tools.',
-'Provides prompt and meaningful feedback performance and progress.',
-'Maintains discipline and a respectful classroom environment regardless of beliefs, value systems and lifestyles.',
-'Addresses student concerns appropriately.',
-'Starts and ends classes on time.',
-'Implements and promotes stewardship materials being used.',
-'Demonstrates punctuality and regular attendance.',
-'Dresses appropriately and professionally.',
-'Observes confidentiality and integrity',
-'Shows respect to colleagues, students, and administrators.',
-'Exemplifies teamwork and support to the institutional ways and processes to help deliver quality education stakeholders',
-'Models and promotes the Core Values of GWC - integrity, godliness, diligence, excellence, compassion, accessibility, Christian virtue and transformation.',
-'Encourages moral and spiritual formation among students.',
-'Integrates Vision, Mission and Core Values of GWC in teaching where applicable.'
+    'Presents lessons clearly and understandably.',
+    'Demonstrates mastery of the subject matter.',
+    'Uses appropriate teaching strategies and instructional materials.',
+    'Encourages critical thinking and active participation.',
+    'Assesses student performance fairly and regularly.',
+    'Utilizes multiple assessment strategies and tools.',
+    'Provides prompt and meaningful feedback on performance and progress.',
+    'Maintains discipline and a respectful classroom environment.',
+    'Addresses student concerns appropriately.',
+    'Starts and ends classes on time.',
+    'Implements and promotes stewardship of materials being used.',
+    'Demonstrates punctuality and regular attendance.',
+    'Dresses appropriately and professionally.',
+    'Observes confidentiality and integrity.',
+    'Shows respect to colleagues, students, and administrators.',
+    'Exemplifies teamwork and support to institutional processes.',
+    'Models and promotes the Core Values of the institution.',
+    'Encourages moral and spiritual formation among students.',
+    'Integrates Vision, Mission and Core Values in teaching where applicable.'
   ];
   try {
-    // Insert each question with auto-generated id
     for (const question_text of questions) {
       await db.promise().query('INSERT INTO evaluation_questions (question_text) VALUES (?)', [question_text]);
     }
-    res.json({ message: '10 questions inserted.' });
+    res.json({ message: `${questions.length} questions inserted.` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Get all evaluation questions
-app.get('/evaluation_questions', async (req, res) => {
-  try {
-    const [rows] = await db.promise().query('SELECT id, question_text FROM evaluation_questions');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * Get All Evaluation Questions (Alternative endpoint)
- * GET /evaluation_question
- * Returns: List of all evaluation questions with id and question_text
- */
-app.get('/evaluation_question', async (req, res) => {
-  try {
-    const [rows] = await db.promise().query('SELECT id, question_text FROM evaluation_questions');
-    res.json(rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Create evaluation with frontend-provided teacher_id, student_id, created_by
-app.post('/evaluation/create', async (req, res) => {
-  const { teacher_id} = req.body;
-  if (!teacher_id) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-  // Generate id: year + month + 5 random digits
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const randomNum = Math.floor(10000 + Math.random() * 90000); // 5 digits
-  // Set expires_at to today at 10:00 PM
-  const expires_at = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 22, 0, 0);
-  // Generate random 4-digit password
-  const password = Math.floor(1000 + Math.random() * 9000).toString();
-  try {
-    const [result] = await db.execute(
-      'INSERT INTO evaluation (teacher_id, expires_at, password) VALUES (?, ?, ?)',
-      [teacher_id, expires_at, password]
-    );
-    res.json({ teacher_id, expires_at, password});
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET evaluation answers with questions for a specific evaluation
-app.get('/evaluation_answers/:evaluation_id', async (req, res) => {
-  const { evaluation_id } = req.params;
-  const { student_id } = req.query;
-  
-  try {
-    // First, get the evaluation details
-    const [evaluationDetails] = await db.promise().query(
-      `SELECT 
-        e.id as evaluation_id,
-        e.teacher_id,
-        e.student_id,
-        e.created_at,
-        e.expires_at,
-        e.status,
-        u.name as teacher_name
-      FROM evaluation e
-      LEFT JOIN users u ON e.teacher_id = u.id
-      WHERE e.id = ? AND e.student_id = ?`,
-      [evaluation_id, student_id]
-    );
-
-    if (evaluationDetails.length === 0) {
-      return res.status(404).json({ error: 'Evaluation not found' });
-    }
-
-    // Get all answers with their corresponding questions
-    const [answers] = await db.promise().query(
-      `SELECT 
-        ea.id,
-        ea.question_id,
-        ea.student_id,
-        ea.rating,
-        eq.question_text
-      FROM evaluation_answers ea
-      JOIN evaluation_questions eq ON ea.question_id = eq.id
-      WHERE ea.evaluation_id = ? AND ea.student_id = ?
-      ORDER BY ea.question_id`,
-      [evaluation_id, student_id]
-    );
-
-    // Format the response to match the component's expected structure
-    const response = {
-      evaluation_id: evaluationDetails[0].evaluation_id,
-      teacher_id: evaluationDetails[0].teacher_id,
-      teacher_name: evaluationDetails[0].teacher_name,
-      student_id: evaluationDetails[0].student_id,
-      created_at: evaluationDetails[0].created_at,
-      expires_at: evaluationDetails[0].expires_at,
-      status: evaluationDetails[0].status,
-      answers: answers.map(answer => ({
-        id: answer.id,
-        question_id: answer.question_id,
-        question_text: answer.question_text,
-        rating: answer.rating,
-        student_id: answer.student_id
-      }))
-    };
-
-    res.json(response);
-    
-  } catch (err) {
-    console.error('Error fetching evaluation data:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Alternative endpoint if you want to get ALL evaluation answers for an evaluation (all students)
-app.get('/evaluation/:evaluation_id/all_answers', async (req, res) => {
-  const { evaluation_id } = req.params;
-  
-  try {
-    // Get evaluation details
-    const [evaluationDetails] = await db.promise().query(
-      `SELECT 
-        e.id as evaluation_id,
-        e.teacher_id,
-        e.created_at,
-        e.expires_at,
-        e.status,
-        u.name as teacher_name
-      FROM evaluation e
-      LEFT JOIN users u ON e.teacher_id = u.id
-      WHERE e.id = ?`,
-      [evaluation_id]
-    );
-
-    if (evaluationDetails.length === 0) {
-      return res.status(404).json({ error: 'Evaluation not found' });
-    }
-
-    // Get all answers from all students for this evaluation
-    const [answers] = await db.promise().query(
-      `SELECT
-        ea.id,
-        ea.question_id,
-        ea.student_id,
-        ea.rating,
-        eq.question_text
-      FROM evaluation_answers ea
-      JOIN evaluation_questions eq ON ea.question_id = eq.id
-      WHERE ea.evaluation_id = ?
-      ORDER BY ea.student_id, ea.question_id`,
-      [evaluation_id]
-    );
-
-    // Group answers by student
-    const studentAnswers = {};
-    answers.forEach(answer => {
-      if (!studentAnswers[answer.student_id]) {
-        studentAnswers[answer.student_id] = [];
-      }
-      studentAnswers[answer.student_id].push({
-        id: answer.id,
-        question_id: answer.question_id,
-        question_text: answer.question_text,
-        rating: answer.rating
-      });
-    });
-
-    const response = {
-      evaluation_id: evaluationDetails[0].evaluation_id,
-      teacher_id: evaluationDetails[0].teacher_id,
-      teacher_name: evaluationDetails[0].teacher_name,
-      created_at: evaluationDetails[0].created_at,
-      expires_at: evaluationDetails[0].expires_at,
-      status: evaluationDetails[0].status,
-      students: Object.keys(studentAnswers).map(studentId => ({
-        student_id: studentId,
-        answers: studentAnswers[studentId],
-        average_rating: (studentAnswers[studentId].reduce((sum, ans) => sum + ans.rating, 0) / studentAnswers[studentId].length).toFixed(1)
-      }))
-    };
-
-    res.json(response);
-    
-  } catch (err) {
-    console.error('Error fetching all evaluation data:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1640,19 +586,13 @@ app.get('/evaluation/stats', async (req, res) => {
       LEFT JOIN evaluation_answers ea ON e.id = ea.evaluation_id
     `);
 
-    // Get status breakdown (using a simple count for now since status column may not exist)
+    // Get status breakdown
     const [statusBreakdown] = await db.promise().query(`
       SELECT 
-        'active' as status,
+        status,
         COUNT(*) as count
       FROM evaluation
-      WHERE expires_at > NOW()
-      UNION ALL
-      SELECT 
-        'expired' as status,
-        COUNT(*) as count
-      FROM evaluation
-      WHERE expires_at <= NOW()
+      GROUP BY status
     `);
 
     // Get recent evaluations
@@ -1660,11 +600,13 @@ app.get('/evaluation/stats', async (req, res) => {
       SELECT 
         e.id,
         e.teacher_id,
-        u.name as teacher_name,
-        e.expires_at
+        e.student_id,
+        e.status,
+        e.created_at,
+        u.name as teacher_name
       FROM evaluation e
       LEFT JOIN users u ON e.teacher_id = u.id
-      ORDER BY e.id DESC
+      ORDER BY e.created_at DESC
       LIMIT 5
     `);
 
@@ -1845,173 +787,7 @@ const upload = multer({
   }
 });
 
-// Get all certificate requests (admin/dean view)
-app.get('/certificates', (req, res) => {
-  const sql = `
-    SELECT cr.*, u.name as user_name 
-    FROM certificate_requests cr
-    LEFT JOIN users u ON cr.user_id = u.id
-    ORDER BY cr.request_date DESC
-  `;
-  
-  db.query(sql, (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    res.json(results);
-  });
-});
-
-// Get user's certificate requests
-app.get('/certificates/user/:user_id', (req, res) => {
-  const { user_id } = req.params;
-  
-  if (!user_id) {
-    return res.status(400).json({ error: 'Missing required parameter: user_id' });
-  }
-  
-  const sql = `
-    SELECT * FROM certificate_requests 
-    WHERE user_id = ?
-    ORDER BY request_date DESC
-  `;
-  
-  db.query(sql, [user_id], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    res.json(results);
-  });
-});
-
-// Submit new certificate request
-app.post('/certificates/request', (req, res) => {
-  const { user_id, certificate_type, purpose, additional_details } = req.body;
-  
-  if (!user_id || !certificate_type || !purpose) {
-    return res.status(400).json({ error: 'Missing required fields: user_id, certificate_type, and purpose are required' });
-  }
-  
-  const sql = `INSERT INTO certificate_requests (user_id, certificate_type, purpose, additional_details) VALUES (?, ?, ?, ?)`;
-  const values = [user_id, certificate_type, purpose, additional_details || null];
-  
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database insert error', details: err });
-    }
-    res.status(201).json({ 
-      message: 'Certificate request submitted successfully', 
-      id: result.insertId,
-      success: true
-    });
-  });
-});
-
-// Upload certificate file and approve request
-app.post('/certificates/:id/upload', upload.single('certificate_file'), (req, res) => {
-  const { id } = req.params;
-  const { notes, approved_by } = req.body;
-  const file = req.file;
-  
-  console.log('Upload request received:');
-  console.log('- Request ID:', id);
-  console.log('- File object:', file);
-  
-  if (!id) {
-    return res.status(400).json({ error: 'Missing required parameter: id' });
-  }
-  
-  if (!file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
-  
-  console.log('File upload details:');
-  console.log('- Original name:', file.originalname);
-  console.log('- Saved filename:', file.filename);
-  console.log('- File path:', file.path);
-  console.log('- File size:', file.size);
-  console.log('- Mimetype:', file.mimetype);
-  
-  const sql = `
-    UPDATE certificate_requests 
-    SET status = 'Approved',
-        certificate_file_path = ?,
-        certificate_file_name = ?,
-        file_size = ?,
-        approved_by = ?,
-        approved_date = NOW()
-    WHERE id = ?
-  `;
-  const values = [file.path, file.originalname, file.size, approved_by || null, id];
-  
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Certificate request not found' });
-    }
-    
-    res.json({ 
-      success: true,
-      message: 'Certificate uploaded and request approved',
-      file: {
-        filename: file.originalname,
-        path: file.path,
-        size: file.size
-      }
-    });
-  });
-});
-
-// Reject certificate request
-app.put('/certificates/:id/reject', (req, res) => {
-  const { id } = req.params;
-  const { rejection_reason, rejected_by } = req.body;
-  
-  if (!id) {
-    return res.status(400).json({ error: 'Missing required parameter: id' });
-  }
-  
-  if (!rejection_reason) {
-    return res.status(400).json({ error: 'Missing required field: rejection_reason' });
-  }
-  
-  const sql = `
-    UPDATE certificate_requests 
-    SET status = 'Rejected',
-        rejection_reason = ?,
-        approved_by = ?,
-        approved_date = NOW()
-    WHERE id = ?
-  `;
-  const values = [rejection_reason, rejected_by || null, id];
-  
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Certificate request not found' });
-    }
-    
-    res.json({ 
-      success: true, 
-      message: 'Certificate request rejected successfully' 
-    });
-  });
-});
-
-// Download certificate file - Fixed for corruption issues
-app.get('/certificates/:id/download', (req, res) => {
-  const { id } = req.params;
-  
-  if (!id) {
-    return res.status(400).json({ error: 'Missing required parameter: id' });
-  }
-  
+// Alternative download method - Raw file serving (implemented below in a clean route)
   const sql = `SELECT certificate_file_path, certificate_file_name FROM certificate_requests WHERE id = ? AND status = 'Approved'`;
   
   db.query(sql, [id], (err, results) => {
@@ -2251,34 +1027,51 @@ app.get('/certificates/:id/download-raw', (req, res) => {
         return res.status(500).json({ error: 'File size mismatch - possible corruption' });
       }
       
-      // Set headers
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Length', fileBuffer.length);
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Pragma', 'no-cache');
-      
-      // Send file buffer directly
-      res.send(fileBuffer);
-      
-      console.log('Raw download completed for:', fileName);
-      
-    } catch (readErr) {
-      console.error('Raw download error:', readErr);
-      res.status(500).json({ error: 'Failed to read file', details: readErr.message });
-    }
-  });
-});
+      // Middleware
+      // Configure CORS to allow the known frontend and common mobile origins (Android/WebView)
+      const allowedOrigins = [
+        process.env.NGROK_URL,
+        process.env.FRONTEND_URL || 'http://localhost:3000',
+        'https://active-upward-sunbeam.ngrok-free.app',
+        'https://hrmc.onrender.com'
+      ].filter(Boolean);
+      const mobileOrigins = [
+        'capacitor://localhost',
+        'ionic://localhost',
+        'http://localhost',
+        'http://127.0.0.1',
+        'http://10.0.2.2', // Android emulator
+        'http://10.0.3.2'  // Genymotion
+      ];
+      console.log('CORS allowed origins (plus mobile allowances and no-origin):', allowedOrigins.length ? allowedOrigins : 'any');
 
-// File integrity checker
-app.get('/certificates/:id/verify', (req, res) => {
-  const { id } = req.params;
-  
-  const sql = `SELECT certificate_file_path, certificate_file_name, file_size FROM certificate_requests WHERE id = ?`;
-  
-  db.query(sql, [id], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error' });
+      app.use(cors({
+        origin: function(origin, callback) {
+          // allow requests with no Origin header (native apps/OkHttp/curl)
+          if (!origin) return callback(null, true);
+          // some WebViews send literal 'null' as Origin — allow it
+          if (origin === 'null') return callback(null, true);
+          // explicit allowlists
+          if (allowedOrigins.includes(origin)) return callback(null, true);
+          if (mobileOrigins.includes(origin)) return callback(null, true);
+          // also allow localhost/emulator with ports
+          const emulatorHostRegex = /^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|10\.0\.3\.2)(:\d+)?$/;
+          if (emulatorHostRegex.test(origin)) return callback(null, true);
+          console.warn('CORS denied origin:', origin);
+          return callback(new Error('CORS policy: This origin is not allowed'));
+        },
+        credentials: true,
+        allowedHeaders: [
+              'Origin',
+              'X-Requested-With',
+              'Content-Type',
+              'Accept',
+              'Authorization',
+              'ngrok-skip-browser-warning'
+          ],
+        methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+        optionsSuccessStatus: 204
+      }));
     }
     
     if (results.length === 0) {
@@ -3026,339 +1819,72 @@ app.get('/departments', (req, res) => {
 });
 
 // Get department by ID
-app.get('/departments/:id', (req, res) => {
-  const deptId = req.params.id;
-  db.query('SELECT id, name, create_At, updated_At, updated_By FROM department WHERE id = ?', [deptId], (err, results) => {
+app.get('/certificates/:id/download-raw', (req, res) => {
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ error: 'Missing required parameter: id' });
+  }
+
+  const sql = `SELECT certificate_file_path, certificate_file_name FROM certificate_requests WHERE id = ? AND status = 'Approved'`;
+
+  db.query(sql, [id], (err, results) => {
     if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
+      return res.status(500).json({ error: 'Database query error' });
     }
+
     if (results.length === 0) {
-      return res.status(404).json({ error: 'Department not found' });
+      return res.status(404).json({ error: 'Certificate not found or not approved' });
     }
-    res.json(results[0]);
+
+    const filePath = results[0].certificate_file_path;
+    const fileName = results[0].certificate_file_name;
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+
+    console.log('Raw download attempt:', absPath);
+
+    if (!fs.existsSync(absPath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    try {
+      const fileStats = fs.statSync(absPath);
+      const fileExtension = path.extname(fileName || absPath).toLowerCase();
+
+      // Determine content type
+      let contentType = 'application/octet-stream';
+      if (fileExtension === '.pdf') contentType = 'application/pdf';
+      else if (fileExtension === '.doc') contentType = 'application/msword';
+      else if (fileExtension === '.docx') contentType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+      // Read file synchronously to avoid corruption
+      const fileBuffer = fs.readFileSync(absPath);
+
+      console.log('File buffer size:', fileBuffer.length);
+      console.log('File stats size:', fileStats.size);
+
+      if (fileBuffer.length !== fileStats.size) {
+        return res.status(500).json({ error: 'File size mismatch - possible corruption' });
+      }
+
+      // Set headers and send
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', fileBuffer.length);
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Pragma', 'no-cache');
+
+      // Send file buffer directly
+      res.send(fileBuffer);
+
+      console.log('Raw download completed for:', fileName);
+
+    } catch (readErr) {
+      console.error('Raw download error:', readErr);
+      res.status(500).json({ error: 'Failed to read file', details: readErr.message });
+    }
   });
 });
-
-// Create department
-app.post('/departments', (req, res) => {
-  const { name, updated_By } = req.body;
-  if (!name) {
-    return res.status(400).json({ error: 'Missing department name' });
-  }
-  const now = new Date();
-  db.query('INSERT INTO department (name, create_At, updated_At, updated_By) VALUES (?, ?, ?, ?)', [name, now, now, updated_By || null], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database insert error', details: err });
-    }
-    res.status(201).json({ message: 'Department created', id: result.insertId });
-  });
-});
-
-// Update department
-app.put('/departments/:id', (req, res) => {
-  const deptId = req.params.id;
-  const { name, updated_By } = req.body;
-  if (!name) {
-    return res.status(400).json({ error: 'Missing department name' });
-  }
-  const now = new Date();
-  db.query('UPDATE department SET name = ?, updated_At = ?, updated_By = ? WHERE id = ?', [name, now, updated_By || null, deptId], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database update error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Department not found' });
-    }
-    res.json({ message: 'Department updated' });
-  });
-});
-
-// Delete department
-app.delete('/departments/:id', (req, res) => {
-  const deptId = req.params.id;
-  db.query('DELETE FROM department WHERE id = ?', [deptId], (err, result) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database delete error', details: err });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Department not found' });
-    }
-    res.json({ message: 'Department deleted' });
-  });
-});
-
-// --- Students CRUD API ---
-
-/**
- * Get All Students
- * GET /students
- * Returns: List of all students with id, name, year, course
- */
-app.get('/students', (req, res) => {
-  const sql = 'SELECT id, name, year, course FROM students ORDER BY name';
-  db.query(sql, (err, results) => {
-    if (err) {
-      console.error('GET /students error:', {
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql
-      });
-      // For GET endpoints, return empty array instead of error to prevent frontend iteration errors
-      console.warn('GET /students returning empty array due to database error');
-      return res.status(200).json([]);
-    }
-    // Ensure IDs are strings to avoid numeric coercion
-    const formatted = results.map(row => ({
-      ...row,
-      id: row.id != null ? String(row.id) : null
-    }));
-    res.json(formatted);
-  });
-});
-
-/**
- * Get Student by ID
- * GET /students/:id
- * Returns: Single student object
- */
-app.get('/students/:id', (req, res) => {
-  const studentId = req.params.id;
-  const sql = 'SELECT id, name, year, course FROM students WHERE id = ?';
-  
-  db.query(sql, [studentId], (err, results) => {
-    if (err) {
-      console.error('GET /students/:id error:', {
-        studentId: studentId,
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql
-      });
-      return res.status(500).json({ 
-        error: 'Database query error', 
-        details: err.message || err,
-        code: err.code,
-        studentId: studentId,
-        hint: err.code === 'ER_NO_SUCH_TABLE' ? 'Students table does not exist' : 'Check database connection and student ID format'
-      });
-    }
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'Student not found', studentId: studentId });
-    }
-    
-    const student = results[0];
-    student.id = student.id != null ? String(student.id) : null;
-    res.json(student);
-  });
-});
-
-/**
- * Create New Student
- * POST /students
- * Body: { id, name, year, course }
- * Returns: Success message and student ID
- */
-app.post('/students', (req, res) => {
-  const { id, name, year, course } = req.body;
-  
-  if (!id || !name || !year || !course) {
-    return res.status(400).json({ error: 'Missing required fields: id, name, year, and course are required' });
-  }
-
-  const sql = 'INSERT INTO students (id, name, year, course) VALUES (?, ?, ?, ?)';
-  const values = [String(id), name, year, course]; // Ensure ID is stored as string
-  
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      console.error('POST /students error:', {
-        requestBody: { id, name, year, course },
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql,
-        values: values
-      });
-      
-      return res.status(500).json({ 
-        error: 'Database insert error', 
-        details: err.message || err,
-        code: err.code,
-        hint: err.code === 'ER_NO_SUCH_TABLE' ? 'Students table does not exist - run CREATE TABLE first' : 
-              err.code === 'ER_DUP_ENTRY' ? 'Student ID already exists - use a different ID' :
-              'Check database connection and field constraints'
-      });
-    }
-    
-    res.status(201).json({ 
-      message: 'Student created successfully', 
-      studentId: String(id),
-      id: String(id)
-    });
-  });
-});
-
-/**
- * Update Student
- * PUT /students/:id
- * Body: { name, year, course }
- * Returns: Success message
- */
-app.put('/students/:id', (req, res) => {
-  const studentId = req.params.id;
-  const { name, year, course } = req.body;
-  
-  if (!name || !year || !course) {
-    return res.status(400).json({ error: 'Missing required fields: name, year, and course are required' });
-  }
-  
-  const sql = 'UPDATE students SET name = ?, year = ?, course = ? WHERE id = ?';
-  const values = [name, year, course, studentId];
-  
-  db.query(sql, values, (err, result) => {
-    if (err) {
-      console.error('PUT /students/:id error:', {
-        studentId: studentId,
-        requestBody: { name, year, course },
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql,
-        values: values
-      });
-      return res.status(500).json({ 
-        error: 'Database update error', 
-        details: err.message || err,
-        code: err.code,
-        studentId: studentId,
-        hint: err.code === 'ER_NO_SUCH_TABLE' ? 'Students table does not exist' : 
-              'Check database connection and field constraints'
-      });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Student not found', studentId: studentId });
-    }
-    res.json({ message: 'Student updated successfully' });
-  });
-});
-
-/**
- * Delete Student
- * DELETE /students/:id
- * Returns: Success message
- */
-app.delete('/students/:id', (req, res) => {
-  const studentId = req.params.id;
-  const sql = 'DELETE FROM students WHERE id = ?';
-  
-  db.query(sql, [studentId], (err, result) => {
-    if (err) {
-      console.error('DELETE /students/:id error:', {
-        studentId: studentId,
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql
-      });
-      return res.status(500).json({ 
-        error: 'Database delete error', 
-        details: err.message || err,
-        code: err.code,
-        studentId: studentId,
-        hint: err.code === 'ER_NO_SUCH_TABLE' ? 'Students table does not exist' : 
-              'Check database connection and CASCADE constraints'
-      });
-    }
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Student not found', studentId: studentId });
-    }
-    res.json({ message: 'Student deleted successfully' });
-  });
-});
-
-/**
- * Get Students by Year
- * GET /students/year/:year
- * Returns: List of students in specified year
- */
-app.get('/students/year/:year', (req, res) => {
-  const year = req.params.year;
-  const sql = 'SELECT id, name, year, course FROM students WHERE year = ? ORDER BY name';
-  
-  db.query(sql, [year], (err, results) => {
-    if (err) {
-      console.error('GET /students/year/:year error:', {
-        year: year,
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql
-      });
-      // For GET endpoints, return empty array instead of error to prevent frontend iteration errors
-      console.warn(`GET /students/year/${year} returning empty array due to database error`);
-      return res.status(200).json([]);
-    }
-    
-    // Ensure IDs are strings
-    const formatted = results.map(row => ({
-      ...row,
-      id: row.id != null ? String(row.id) : null
-    }));
-    
-    res.json(formatted);
-  });
-});
-
-/**
- * Get Students by Course
- * GET /students/course/:course
- * Returns: List of students in specified course
- */
-app.get('/students/course/:course', (req, res) => {
-  const course = req.params.course;
-  const sql = 'SELECT id, name, year, course FROM students WHERE course = ? ORDER BY year, name';
-  
-  db.query(sql, [course], (err, results) => {
-    if (err) {
-      console.error('GET /students/course/:course error:', {
-        course: course,
-        message: err.message,
-        code: err.code,
-        errno: err.errno,
-        sqlState: err.sqlState,
-        sqlMessage: err.sqlMessage,
-        sql: sql
-      });
-      // For GET endpoints, return empty array instead of error to prevent frontend iteration errors
-      console.warn(`GET /students/course/${course} returning empty array due to database error`);
-      return res.status(200).json([]);
-    }
-    
-    // Ensure IDs are strings
-    const formatted = results.map(row => ({
-      ...row,
-      id: row.id != null ? String(row.id) : null
-    }));
-    
-    res.json(formatted);
-  });
-});
-
-// Create HTTP server and attach Socket.IO integration so /socket.io is served
-const server = http.createServer(app);
-// Middleware to log socket.io engine requests for debugging polling issues
 app.use((req, res, next) => {
   try {
     if (req.path && req.path.startsWith && req.path.startsWith('/socket.io')) {
@@ -3488,98 +2014,6 @@ app.get('/attendance/merged', async (req, res) => {
   } catch (err) {
     console.error('Error in /attendance/merged:', err && err.stack ? err.stack : err);
     return res.status(500).json({ error: 'Server error' });
-  }
-});
-
-
-/**
- * Get User Profile by ID
- * GET /users/:id/profile
- * Returns: User profile information (id, name, email, role, department)
- */
-app.get('/users/:id/profile', (req, res) => {
-  const userId = req.params.id;
-  
-  const query = `
-    SELECT u.id, u.name, u.email, u.code, u.created_at,
-           r.name AS role_name,
-           d.name AS department_name
-    FROM users u
-    LEFT JOIN roles r ON u.role_id = r.id  
-    LEFT JOIN department d ON u.department_id = d.id
-    WHERE u.id = ?
-  `;
-  
-  db.query(query, [userId], (err, results) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database query error', details: err });
-    }
-    if (results.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    
-    // Ensure IDs are strings to avoid numeric coercion
-    const profile = results[0];
-    profile.id = profile.id != null ? String(profile.id) : null;
-    
-    res.json(profile);
-  });
-});
-
-/**
- * Update User Password
- * PUT /users/:id/password
- * Body: { currentPassword, newPassword }
- * Returns: Success message
- */
-app.put('/users/:id/password', async (req, res) => {
-  const userId = req.params.id;
-  const { currentPassword, newPassword } = req.body;
-  
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'Current password and new password are required' });
-  }
-  
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
-  }
-  
-  try {
-    // First, get the current password hash
-    db.query('SELECT password FROM users WHERE id = ?', [userId], async (err, results) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database query error', details: err });
-      }
-      if (results.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-      
-      // Verify current password
-      const passwordMatch = await bcrypt.compare(currentPassword, results[0].password);
-      if (!passwordMatch) {
-        return res.status(400).json({ error: 'Current password is incorrect' });
-      }
-      
-      // Hash new password and update
-      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-      const updated_at = new Date();
-      
-      db.query(
-        'UPDATE users SET password = ?, updated_at = ? WHERE id = ?',
-        [hashedNewPassword, updated_at, userId],
-        (updateErr, updateResult) => {
-          if (updateErr) {
-            return res.status(500).json({ error: 'Failed to update password', details: updateErr });
-          }
-          if (updateResult.affectedRows === 0) {
-            return res.status(404).json({ error: 'User not found' });
-          }
-          res.json({ message: 'Password updated successfully' });
-        }
-      );
-    });
-  } catch (error) {
-    res.status(500).json({ error: 'Password hashing failed', details: error });
   }
 });
 

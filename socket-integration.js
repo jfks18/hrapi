@@ -16,11 +16,12 @@ function attachSocket({ app, server, db }) {
 
    const io = new Server(server, {
     cors: {
-      origin: true,
+      origin: ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001", true],
       methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization', 'ngrok-skip-browser-warning']
-    }
+    },
+    transports: ['websocket', 'polling']
   });
 
   // Log incoming /socket.io HTTP requests (helpful to debug engine.io polling via proxies/ngrok)
@@ -34,12 +35,20 @@ function attachSocket({ app, server, db }) {
       } catch (e) { /* ignore logging errors */ }
     });
   } catch (e) { /* ignore if server doesn't support request event */ }
-  // Socket auth middleware: when JWT_SECRET is present require a valid token
+  // Socket auth middleware: more lenient for localhost development
   io.use((socket, next) => {
     const token = socket.handshake?.auth?.token || null;
     // Log minimal token info for debugging
     if (!token) console.warn(`socket handshake: no token provided for socket ${socket.id}`);
     else console.log(`socket handshake: token present for socket ${socket.id} (len=${String(token).length})`);
+    
+    // Allow connections without strict auth for development or when no JWT_SECRET
+    if (!process.env.JWT_SECRET || process.env.NODE_ENV === 'development') {
+      console.log(`Socket auth: allowing connection for development mode for socket ${socket.id}`);
+      socket.user = token ? { id: 'dev-user', name: 'Dev User' } : { id: 'anonymous', name: 'Anonymous' };
+      return next();
+    }
+    
     if (process.env.JWT_SECRET) {
       if (!token) {
         console.warn(`Socket auth: missing token and JWT_SECRET is set - rejecting socket ${socket.id}`);
