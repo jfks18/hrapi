@@ -155,17 +155,22 @@ function authenticateToken(req, res, next) {
 }
 // MySQL connection setup
 const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'gwc_hrms',
+  connectTimeout: 10000,
+  acquireTimeout: 10000,
+  timeout: 20000
 });
 
 db.connect((err) => {
   if (err) {
     console.error('MySQL connection error:', err);
+    console.error('Database connection failed, but server will continue running');
+    // Don't crash the server, just log the error
   } else {
-    console.log('Connected to MySQL database');
+    console.log('Connected to MySQL database successfully');
   }
 });
 
@@ -3597,9 +3602,33 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
+// Add health check endpoint
+app.get('/health', (req, res) => {
+  // Test database connection
+  db.ping((err) => {
+    if (err) {
+      console.error('Database health check failed:', err);
+      return res.status(503).json({ 
+        status: 'unhealthy', 
+        database: 'disconnected',
+        error: err.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+    res.json({ 
+      status: 'healthy', 
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+      port: process.env.PORT || 5000
+    });
+  });
+});
+
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
+  console.log('Environment:', process.env.NODE_ENV || 'development');
+  console.log('Database host:', process.env.DB_HOST || 'localhost');
 });
 
 
