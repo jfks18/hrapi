@@ -220,6 +220,16 @@ const sendWelcomeEmail = async (email, name, password) => {
           <strong>Important:</strong> Please keep this information secure and consider changing your password after your first login.
         </p>
         
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="https://hrmc.onrender.com/" 
+             style="background-color: #007bff; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            Access HRMC System
+          </a>
+        </div>
+        
+        <p>Click the button above to access your HRMC account, or copy and paste this link into your browser:</p>
+        <p style="color: #007bff; word-break: break-all;">https://hrmc.onrender.com/</p>
+        
         <p>If you have any questions, please contact the HR department.</p>
         
         <p>Best regards,<br>HRMC Administration Team</p>
@@ -597,7 +607,7 @@ app.post('/auth/refresh', (req, res) => {
   const rtoken = req.cookies && req.cookies.refreshToken;
   if (!rtoken) return res.status(401).json({ error: 'no_refresh' });
   if (db && typeof db.query === 'function') {
-    db.query('SELECT user_id, expires_at FROM refresh_tokens WHERE token = ?', [rtoken], (err, rows) => {
+    db.query('SELECT user_id, expires_at FROM ref resh_tokens WHERE token = ?', [rtoken], (err, rows) => {
       if (err) return res.status(500).json({ error: 'db' });
       if (!rows || rows.length === 0) return res.status(401).json({ error: 'invalid_refresh' });
       const rec = rows[0];
@@ -688,6 +698,51 @@ app.get('/leave_request/user/:user_id', (req, res) => {
     if (results.length === 0) {
       return res.status(404).json({ error: 'No leave requests found for this user' });
     }
+    res.json(results);
+  });
+});
+
+/**
+ * Get Leave Requests by Department (for deans)
+ * GET /leave_request/department/:department_id
+ * Returns: Array of leave requests from users in the specified department
+ */
+app.get('/leave_request/department/:department_id', (req, res) => {
+  const department_id = req.params.department_id;
+  
+  const sql = `
+    SELECT lr.*, u.name AS employee_name, u.department_id, u.role_id, 
+           d.name AS department_name, r.name AS role_name
+    FROM leave_request lr
+    LEFT JOIN users u ON lr.user_id = u.id
+    LEFT JOIN department d ON u.department_id = d.id
+    LEFT JOIN roles r ON u.role_id = r.id
+    WHERE u.department_id = ?
+    ORDER BY lr.created_at DESC
+  `;
+  
+  db.query(sql, [department_id], (err, results) => {
+    if (err) {
+      console.error('Database error in /leave_request/department:', err);
+      return res.status(500).json({ error: 'Database query error', details: err.message });
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ 
+        error: 'No leave requests found for this department',
+        department_id: department_id 
+      });
+    }
+    
+    // Log department details for debugging
+    const uniqueEmployees = [...new Set(results.map(r => r.employee_name))];
+    const uniqueRoles = [...new Set(results.map(r => r.role_name).filter(Boolean))];
+    
+    console.log(`Found ${results.length} leave requests for department ${department_id}`);
+    console.log(`- Department: ${results[0]?.department_name || 'Unknown'}`);
+    console.log(`- Employees: ${uniqueEmployees.join(', ')}`);
+    console.log(`- Roles: ${uniqueRoles.join(', ')}`);
+    
     res.json(results);
   });
 });
