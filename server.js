@@ -155,10 +155,10 @@ function authenticateToken(req, res, next) {
 }
 // MySQL connection setup
 const db = mysql.createConnection({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'gwc_hrms',
+  host: process.env.DB_HOST || 'sql100.infinityfree.com',
+  user: process.env.DB_USER || 'if0_40505951',
+  password: process.env.DB_PASSWORD || 'Jfksem18',
+  database: process.env.DB_NAME || 'if0_40505951_gwc',
   connectTimeout: 10000,
   acquireTimeout: 10000,
   timeout: 20000
